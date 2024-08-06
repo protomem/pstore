@@ -1,6 +1,11 @@
 package p2p
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrHandlerClosed = errors.New("handler closed")
 
 type Handler interface {
 	Handle(context.Context, Peer)

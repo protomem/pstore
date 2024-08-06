@@ -153,4 +153,8 @@ func (t *TCPTransport) handleConn(conn net.Conn) {
 	t.mux.Unlock()
 
 	t.handler.Handle(context.TODO(), peer)
+
+	t.mux.Lock()
+	delete(t.peers, peer.conn.RemoteAddr())
+	t.mux.Unlock()
 }

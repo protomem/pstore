@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/protomem/pstore/internal/p2p"
@@ -27,28 +26,17 @@ func main() {
 		return nil
 	}))
 
-	transport.SetHandler(p2p.HandlerFunc(func(_ context.Context, p p2p.Peer) {
-		log.Printf("INFO: new incoming tcp conn %s", p.RemoteAddr())
-		defer log.Printf("INFO: close tcp conn %s", p.RemoteAddr())
-
-		r := bufio.NewReader(p)
-		w := bufio.NewWriter(p)
-		s := bufio.NewScanner(r)
-
-		for s.Scan() {
-			if err := s.Err(); err != nil {
-				log.Printf("ERROR: read from conn %s", p.RemoteAddr())
-				break
+	transport.SetHandler(p2p.NewPacketHandler(func(ctx context.Context, p p2p.Packet, err error) {
+		if err != nil {
+			if errors.Is(err, p2p.ErrHandlerClosed) {
+				return
 			}
 
-			req := s.Text()
-			res := strings.ToUpper(req)
-
-			w.WriteString(res + "\r\n")
-			if err := w.Flush(); err != nil {
-				log.Printf("ERROR: write to conn %s", p.RemoteAddr())
-			}
+			log.Printf("ERROR: read packet from %s: %v", p.From, err)
+			return
 		}
+
+		log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
 	}))
 
 	closeErr := make(chan error)
