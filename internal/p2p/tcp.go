@@ -126,6 +126,7 @@ func (t *TCPTransport) Close() error {
 	for _, peer := range t.peers {
 		peers = append(peers, peer)
 	}
+	t.peers = make(map[net.Addr]Peer)
 	t.mux.RUnlock()
 
 	for _, peer := range peers {
@@ -155,6 +156,7 @@ func (t *TCPTransport) handleConn(conn net.Conn) {
 	t.handler.Handle(context.TODO(), peer)
 
 	t.mux.Lock()
+	peer.Close()
 	delete(t.peers, peer.conn.RemoteAddr())
 	t.mux.Unlock()
 }

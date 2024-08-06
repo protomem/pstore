@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -26,18 +25,14 @@ func main() {
 		return nil
 	}))
 
-	transport.SetHandler(p2p.NewPacketHandler(func(ctx context.Context, p p2p.Packet, err error) {
-		if err != nil {
-			if errors.Is(err, p2p.ErrHandlerClosed) {
-				return
-			}
+	reader := p2p.NewPacketReader()
+	transport.SetHandler(p2p.NewPacketHandler(reader.Handle))
 
-			log.Printf("ERROR: read packet from %s: %v", p.From, err)
-			return
+	go func() {
+		for p := range reader.Read() {
+			log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
 		}
-
-		log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
-	}))
+	}()
 
 	closeErr := make(chan error)
 	go func() {

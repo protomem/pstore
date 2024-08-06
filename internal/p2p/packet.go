@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
+	"sync/atomic"
 )
 
 const _defaultPacketBufferSize = 1024
@@ -84,4 +86,51 @@ func (d DefaultDecoder) Decode(r io.Reader, p *Packet) error {
 	p.Payload = payload
 
 	return err
+}
+
+type PacketReader struct {
+	reader chan Packet
+	closed atomic.Bool
+
+	errMux  sync.RWMutex
+	lastErr error
+}
+
+func NewPacketReader() *PacketReader {
+	return &PacketReader{
+		reader:  make(chan Packet),
+		lastErr: nil,
+	}
+}
+
+func (r *PacketReader) Handle(ctx context.Context, p Packet, err error) {
+	r.errMux.Lock()
+	defer r.errMux.Unlock()
+
+	if r.closed.Load() {
+		return
+	}
+
+	if err != nil {
+		r.lastErr = nil
+		if !errors.Is(err, ErrHandlerClosed) {
+			r.lastErr = err
+		}
+		close(r.reader)
+		r.closed.Store(true)
+		return
+	}
+
+	r.lastErr = nil
+	r.reader <- p
+}
+
+func (r *PacketReader) Err() error {
+	r.errMux.RLock()
+	defer r.errMux.RUnlock()
+	return r.lastErr
+}
+
+func (r *PacketReader) Read() <-chan Packet {
+	return r.reader
 }
