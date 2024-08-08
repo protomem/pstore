@@ -91,7 +91,11 @@ func (fs *FS) Close(_ context.Context) error {
 }
 
 func (fs *FS) initFolder(parent string) error {
-	return os.Mkdir(fs.fmtFoldername(parent), _folderPremMode)
+	err := os.Mkdir(fs.fmtFoldername(parent), _folderPremMode)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
 }
 
 func (fs *FS) fmtFoldername(parent string) string {

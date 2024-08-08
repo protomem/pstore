@@ -6,11 +6,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/protomem/pstore"
+	"github.com/protomem/pstore/internal/blobstore"
 	"github.com/protomem/pstore/internal/p2p"
 )
 
 func main() {
+	ctx := context.Background()
 	log.Println("INFO: pstore version 0.1.0")
 
 	transport, err := p2p.NewTCPTransport(p2p.TCPOptions{
@@ -20,30 +24,30 @@ func main() {
 		log.Panicf("ERROR: new tcp transport: %v", err)
 	}
 
-	transport.SetHandshaker(p2p.HandshakerFunc(func(_ context.Context, p p2p.Peer) error {
-		log.Printf("DEBUG: success handshake with %s", p.RemoteAddr())
-		return nil
-	}))
+	store, err := blobstore.NewFS(blobstore.FSOptions{
+		Path: ".database",
+	})
+	if err != nil {
+		log.Panicf("ERROR: new file system storage: %v", err)
+	}
 
-	reader := p2p.NewPacketReader()
-	transport.SetHandler(p2p.NewPacketHandler(reader.Handle))
-
-	go func() {
-		for p := range reader.Read() {
-			log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
-		}
-	}()
+	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{})
+	go server.Proccess()
 
 	closeErr := make(chan error)
 	go func() {
 		<-quit()
-		closeErr <- transport.Close()
+
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		closeErr <- server.Shutdown(ctx)
 	}()
 
-	log.Printf("INFO: listen on addr %s", transport.Addr())
-	defer log.Printf("INFO: close tcp transport")
+	log.Printf("INFO: start server on addr %s", server.Addr())
+	defer log.Printf("INFO: stop server")
 
-	if err := transport.ListenAndAccept(); err != nil {
+	if err := server.Start(); err != nil {
 		log.Panicf("ERROR: listen: %v", err)
 	}
 
