@@ -13,4 +13,9 @@ type Peer interface {
 type Transport interface {
 	Addr() net.Addr
 	ListenAndAccept() error
+
+	SetHandler(h Handler)
+	SetHandshaker(h Handshaker)
+
+	Close() error
 }
