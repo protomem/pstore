@@ -10,7 +10,9 @@ import (
 	"github.com/protomem/pstore/internal/p2p"
 )
 
-type FileServerOptions struct{}
+type FileServerOptions struct {
+	Nodes []string
+}
 
 type FileServer struct {
 	Options FileServerOptions
@@ -52,6 +54,10 @@ func (s *FileServer) Process() {
 }
 
 func (s *FileServer) Start() error {
+	if err := s.bootstrapNodes(); err != nil {
+		return err
+	}
+
 	return s.transport.ListenAndAccept()
 }
 
@@ -63,6 +69,16 @@ func (s *FileServer) Close(ctx context.Context) error {
 	errs = errors.Join(errs, s.transport.Close())
 	errs = errors.Join(errs, s.store.Close(ctx))
 
+	return errs
+}
+
+func (s *FileServer) bootstrapNodes() error {
+	var errs error
+	for _, addr := range s.Options.Nodes {
+		if err := s.transport.Dial(addr); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
 	return errs
 }
 

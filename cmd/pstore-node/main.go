@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -13,12 +14,18 @@ import (
 	"github.com/protomem/pstore/internal/p2p"
 )
 
+var _listenAddr = flag.String("addr", ":1337", "listen address")
+
+func init() {
+	flag.Parse()
+}
+
 func main() {
 	ctx := context.Background()
 	log.Println("INFO: pstore version 0.1.0")
 
 	transport, err := p2p.NewTCPTransport(p2p.TCPOptions{
-		ListenAddr: ":1337",
+		ListenAddr: *_listenAddr,
 	})
 	if err != nil {
 		log.Panicf("ERROR: new tcp transport: %v", err)
@@ -31,7 +38,9 @@ func main() {
 		log.Panicf("ERROR: new file system storage: %v", err)
 	}
 
-	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{})
+	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{
+		Nodes: []string{":1338"},
+	})
 	go server.Process()
 
 	closeErr := make(chan error)

@@ -105,7 +105,7 @@ func (t *TCPTransport) ListenAndAccept() error {
 			continue
 		}
 
-		go t.handleConn(conn)
+		go t.handleConn(conn, false)
 	}
 
 	t.close <- struct{}{}
@@ -137,13 +137,24 @@ func (t *TCPTransport) Close() error {
 	return errs
 }
 
+func (t *TCPTransport) Dial(addr string) error {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	go t.handleConn(conn, true)
+
+	return nil
+}
+
 func (t *TCPTransport) initListener() (err error) {
 	t.lis, err = net.Listen("tcp", t.Options.ListenAddr)
 	return
 }
 
-func (t *TCPTransport) handleConn(conn net.Conn) {
-	peer := NewTCPPeer(conn, false)
+func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
+	peer := NewTCPPeer(conn, outbound)
 
 	if err := t.handshaker.Handshake(context.TODO(), peer); err != nil {
 		return

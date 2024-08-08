@@ -14,6 +14,8 @@ type Transport interface {
 	Addr() net.Addr
 	ListenAndAccept() error
 
+	Dial(string) error
+
 	SetHandler(h Handler)
 	SetHandshaker(h Handshaker)
 
