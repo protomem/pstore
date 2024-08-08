@@ -35,6 +35,10 @@ func (p *TCPPeer) RemoteAddr() net.Addr {
 	return p.conn.RemoteAddr()
 }
 
+func (p *TCPPeer) Outbound() bool {
+	return p.outbound
+}
+
 func (p *TCPPeer) Read(b []byte) (int, error) {
 	return p.conn.Read(b)
 }
@@ -52,7 +56,9 @@ type TCPTransport struct {
 
 	lis        net.Listener
 	handshaker Handshaker
+
 	handler    Handler
+	errHandler func(err error)
 
 	isDone atomic.Bool
 	close  chan struct{}
@@ -67,6 +73,7 @@ func NewTCPTransport(opts TCPOptions) (*TCPTransport, error) {
 		lis:        nil,
 		handshaker: NopHandshaker,
 		handler:    NopHandler,
+		errHandler: func(_ error) {},
 		isDone:     atomic.Bool{},
 		close:      make(chan struct{}, 1),
 		peers:      make(map[net.Addr]Peer),
@@ -90,6 +97,13 @@ func (t *TCPTransport) SetHandler(h Handler) {
 		return
 	}
 	t.handler = h
+}
+
+func (t *TCPTransport) SetErrorHandler(h func(error)) {
+	if h == nil {
+		return
+	}
+	t.errHandler = h
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
@@ -148,6 +162,20 @@ func (t *TCPTransport) Dial(addr string) error {
 	return nil
 }
 
+func (t *TCPTransport) AcquirePeer(addr net.Addr) (Peer, bool) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	peer, ok := t.peers[addr]
+	delete(t.peers, addr)
+	return peer, ok
+}
+
+func (t *TCPTransport) ReleasePeer(peer Peer) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	t.peers[peer.RemoteAddr()] = peer
+}
+
 func (t *TCPTransport) initListener() (err error) {
 	t.lis, err = net.Listen("tcp", t.Options.ListenAddr)
 	return
@@ -156,18 +184,24 @@ func (t *TCPTransport) initListener() (err error) {
 func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 	peer := NewTCPPeer(conn, outbound)
 
-	if err := t.handshaker.Handshake(context.TODO(), peer); err != nil {
-		return
+	t.mux.Lock()
+	t.peers[peer.RemoteAddr()] = peer
+	t.mux.Unlock()
+
+	defer func() {
+		t.mux.Lock()
+		peer.Close()
+		delete(t.peers, peer.RemoteAddr())
+		t.mux.Unlock()
+	}()
+
+	if !outbound {
+		if err := t.handshaker.Handshake(context.TODO(), peer); err != nil {
+			t.errHandler(err)
+			t.errHandler(peer.Close())
+			return
+		}
 	}
 
-	t.mux.Lock()
-	t.peers[peer.conn.RemoteAddr()] = peer
-	t.mux.Unlock()
-
 	t.handler.Handle(context.TODO(), peer)
-
-	t.mux.Lock()
-	peer.Close()
-	delete(t.peers, peer.conn.RemoteAddr())
-	t.mux.Unlock()
 }

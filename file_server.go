@@ -26,10 +26,13 @@ type FileServer struct {
 }
 
 func NewFileServer(store blobstore.Storage, transport p2p.Transport, opts FileServerOptions) *FileServer {
-	transport.SetHandshaker(p2p.HandshakerFunc(func(_ context.Context, p p2p.Peer) error {
-		log.Printf("DEBUG: success handshake with %s", p.RemoteAddr())
-		return nil
-	}))
+	transport.SetHandshaker(PingPongHandshaker)
+	transport.SetErrorHandler(func(err error) {
+		if err == nil {
+			return
+		}
+		log.Printf("ERROR: file server transport: %v", err)
+	})
 
 	reader := p2p.NewPacketReader()
 	transport.SetHandler(p2p.NewPacketHandler(reader.Handle))
@@ -49,7 +52,7 @@ func (s *FileServer) Addr() net.Addr {
 
 func (s *FileServer) Process() {
 	for p := range s.preader.Read() {
-		s.handlerPacket(p)
+		go s.handlePacket(p)
 	}
 }
 
@@ -82,6 +85,18 @@ func (s *FileServer) bootstrapNodes() error {
 	return errs
 }
 
-func (s *FileServer) handlerPacket(p p2p.Packet) {
-	log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
+func (s *FileServer) handlePacket(p p2p.Packet) {
+	if DetectPing(p.Payload) {
+		log.Printf("DEBUG: ping-pong with %s", p.From)
+
+		peer, _ := s.transport.AcquirePeer(p.From)
+		defer s.transport.ReleasePeer(peer)
+
+		_, err := peer.Write([]byte("PONG\r\n"))
+		if err != nil {
+			log.Printf("ERROR: write ping-pong response: %v", err)
+		}
+	} else {
+		log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
+	}
 }
