@@ -32,7 +32,7 @@ func main() {
 	}
 
 	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{})
-	go server.Proccess()
+	go server.Process()
 
 	closeErr := make(chan error)
 	go func() {
@@ -41,7 +41,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		closeErr <- server.Shutdown(ctx)
+		closeErr <- server.Close(ctx)
 	}()
 
 	log.Printf("INFO: start server on addr %s", server.Addr())

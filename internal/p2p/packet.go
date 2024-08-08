@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -43,24 +42,11 @@ func NewPacketHandler(h func(context.Context, Packet, error)) *PacketHandler {
 }
 
 func (h *PacketHandler) Handle(ctx context.Context, p Peer) {
-	defer func() {
-		packet := NewPacket(p.RemoteAddr(), nil)
-		err := p.Close()
-		if err != nil {
-			err = fmt.Errorf("%w: %w", ErrHandlerClosed, err)
-		} else {
-			err = ErrHandlerClosed
-		}
-		h.Handler(ctx, packet, err)
-	}()
-
 	for {
 		packet := NewPacket(p.RemoteAddr(), nil)
 		err := h.Decoder.Decode(p, &packet)
-		if err != nil &&
-			(errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-				errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed)) {
-			return
+		if err != nil && errors.Is(err, io.EOF) {
+			continue
 		}
 		h.Handler(ctx, packet, err)
 	}
@@ -111,17 +97,15 @@ func (r *PacketReader) Handle(ctx context.Context, p Packet, err error) {
 		return
 	}
 
+	r.lastErr = nil
+
 	if err != nil {
-		r.lastErr = nil
-		if !errors.Is(err, ErrHandlerClosed) {
-			r.lastErr = err
-		}
+		r.lastErr = err
 		close(r.reader)
 		r.closed.Store(true)
 		return
 	}
 
-	r.lastErr = nil
 	r.reader <- p
 }
 

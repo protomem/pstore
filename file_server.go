@@ -19,6 +19,8 @@ type FileServer struct {
 	transport p2p.Transport
 
 	preader *p2p.PacketReader
+
+	quit chan struct{}
 }
 
 func NewFileServer(store blobstore.Storage, transport p2p.Transport, opts FileServerOptions) *FileServer {
@@ -35,6 +37,7 @@ func NewFileServer(store blobstore.Storage, transport p2p.Transport, opts FileSe
 		store:     store,
 		transport: transport,
 		preader:   reader,
+		quit:      make(chan struct{}, 1),
 	}
 }
 
@@ -42,7 +45,7 @@ func (s *FileServer) Addr() net.Addr {
 	return s.transport.Addr()
 }
 
-func (s *FileServer) Proccess() {
+func (s *FileServer) Process() {
 	for p := range s.preader.Read() {
 		s.handlerPacket(p)
 	}
@@ -52,10 +55,14 @@ func (s *FileServer) Start() error {
 	return s.transport.ListenAndAccept()
 }
 
-func (s *FileServer) Shutdown(ctx context.Context) error {
+func (s *FileServer) Close(ctx context.Context) error {
+	s.quit <- struct{}{}
+	close(s.quit)
+
 	var errs error
 	errs = errors.Join(errs, s.transport.Close())
 	errs = errors.Join(errs, s.store.Close(ctx))
+
 	return errs
 }
 
