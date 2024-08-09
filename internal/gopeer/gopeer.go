@@ -145,6 +145,7 @@ func (n *Node) listenAndAccept() {
 
 			if err := n.handshake.Handshaker(peer); err != nil {
 				n.pushErr(err)
+				n.pushErr(peer.Close())
 				continue
 			}
 

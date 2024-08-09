@@ -5,48 +5,41 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/protomem/pstore/internal/gopeer"
+	"github.com/protomem/pstore"
 )
 
-var _addr = flag.String("addr", ":1337", "listen address")
+var (
+	_addr  = flag.String("addr", ":1337", "listen address")
+	_db    = flag.String("db", ".database", "db path")
+	_nodes = flag.String("nodes", "", "nodes to connect to")
+)
 
 func init() {
 	flag.Parse()
 }
 
 func main() {
-	tcpClient := gopeer.NewTCPClient()
-	tcpLis, err := gopeer.NewTCPListener(*_addr)
-	if err != nil {
-		log.Printf("ERROR: new tcp listener: %v", err)
-		panic(err)
-	}
-
-	handshake := gopeer.HandshakerFunc(func(peer gopeer.Peer) error {
-		log.Printf("DEBUG: success handshake with %s", peer.RemoteAddr())
-		return nil
+	server := pstore.NewFileServer(pstore.Options{
+		Path:  *_db,
+		Addr:  *_addr,
+		Nodes: parseNodes(*_nodes),
 	})
 
-	node, err := gopeer.NewNode(tcpLis, tcpClient, handshake)
-	if err != nil {
-		log.Printf("ERROR: new node: %v", err)
-		panic(err)
-	}
-
 	go func() {
-		for p := range node.Read() {
-			log.Printf("INFO: read packet from %s: %s", p.Addr, p.Payload)
+		if err := server.Start(); err != nil {
+			log.Printf("ERROR: start server: %v", err)
 		}
 	}()
 
-	log.Printf("INFO: start server on addr %s", node.Addr())
+	log.Printf("INFO: start server on addr %s", server.Addr())
 	defer log.Printf("INFO: stop server")
 
 	<-quit()
 
-	if err := node.Close(); err != nil {
+	if err := server.Close(); err != nil {
 		log.Printf("ERROR: close node: %v", err)
 	}
 }
@@ -55,4 +48,12 @@ func quit() <-chan os.Signal {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	return ch
+}
+
+func parseNodes(nodes string) []string {
+	nodes = strings.TrimSpace(nodes)
+	if nodes == "" {
+		return nil
+	}
+	return strings.Split(nodes, ",")
 }

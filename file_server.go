@@ -1,102 +1,137 @@
 package pstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
-	"net"
 
 	"github.com/protomem/pstore/internal/blobstore"
-	"github.com/protomem/pstore/internal/p2p"
+	"github.com/protomem/pstore/internal/gopeer"
 )
 
-type FileServerOptions struct {
+type Options struct {
+	Path  string
+	Addr  string
 	Nodes []string
 }
 
 type FileServer struct {
-	Options FileServerOptions
+	Options Options
 
-	store     blobstore.Storage
-	transport p2p.Transport
-
-	preader *p2p.PacketReader
-
-	quit chan struct{}
+	store blobstore.Storage
+	node  *gopeer.Node
 }
 
-func NewFileServer(store blobstore.Storage, transport p2p.Transport, opts FileServerOptions) *FileServer {
-	transport.SetHandshaker(PingPongHandshaker)
-	transport.SetErrorHandler(func(err error) {
-		if err == nil {
-			return
-		}
-		log.Printf("ERROR: file server transport: %v", err)
-	})
-
-	reader := p2p.NewPacketReader()
-	transport.SetHandler(p2p.NewPacketHandler(reader.Handle))
-
-	return &FileServer{
-		Options:   opts,
-		store:     store,
-		transport: transport,
-		preader:   reader,
-		quit:      make(chan struct{}, 1),
+func NewFileServer(options Options) *FileServer {
+	s := &FileServer{
+		Options: options,
 	}
+	return s
 }
 
-func (s *FileServer) Addr() net.Addr {
-	return s.transport.Addr()
-}
-
-func (s *FileServer) Process() {
-	for p := range s.preader.Read() {
-		go s.handlePacket(p)
-	}
+func (s *FileServer) Addr() string {
+	return s.Options.Addr
 }
 
 func (s *FileServer) Start() error {
-	if err := s.bootstrapNodes(); err != nil {
+	if err := s.initNode(); err != nil {
 		return err
 	}
 
-	return s.transport.ListenAndAccept()
+	if err := s.initStore(); err != nil {
+		return err
+	}
+
+	if err := s.connectToNodes(); err != nil {
+		return err
+	}
+
+	return s.process()
 }
 
-func (s *FileServer) Close(ctx context.Context) error {
-	s.quit <- struct{}{}
-	close(s.quit)
-
+func (s *FileServer) Close() error {
 	var errs error
-	errs = errors.Join(errs, s.transport.Close())
-	errs = errors.Join(errs, s.store.Close(ctx))
-
+	errs = errors.Join(errs, s.store.Close(context.TODO()))
+	errs = errors.Join(errs, s.node.Close())
 	return errs
 }
 
-func (s *FileServer) bootstrapNodes() error {
-	var errs error
+func (s *FileServer) initNode() error {
+	var err error
+
+	client := gopeer.NewTCPClient()
+	lis, err := gopeer.NewTCPListener(s.Options.Addr)
+	if err != nil {
+		return err
+	}
+
+	s.node, err = gopeer.NewNode(lis, client, pingPongHandshaker)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *FileServer) initStore() error {
+	var err error
+
+	s.store, err = blobstore.NewFS(blobstore.FSOptions{
+		Path: s.Options.Path,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *FileServer) connectToNodes() error {
 	for _, addr := range s.Options.Nodes {
-		if err := s.transport.Dial(addr); err != nil {
-			errs = errors.Join(errs, err)
-		}
-	}
-	return errs
-}
-
-func (s *FileServer) handlePacket(p p2p.Packet) {
-	if DetectPing(p.Payload) {
-		log.Printf("DEBUG: ping-pong with %s", p.From)
-
-		peer, _ := s.transport.AcquirePeer(p.From)
-		defer s.transport.ReleasePeer(peer)
-
-		_, err := peer.Write([]byte("PONG\r\n"))
+		err := s.node.Dial(addr)
 		if err != nil {
-			log.Printf("ERROR: write ping-pong response: %v", err)
+			return err
 		}
-	} else {
-		log.Printf("DEBUG: read packet from %s with payload: %s", p.From, p.Payload)
 	}
+	return nil
 }
+
+func (s *FileServer) process() error {
+	for p := range s.node.Read() {
+		log.Printf("INFO: read packet from %s: %s", p.Addr, p.Payload)
+
+		if bytes.HasPrefix(p.Payload, []byte("PING")) {
+			log.Printf("DEBUG: received PING from %s", p.Addr)
+
+			if err := s.node.Write(gopeer.NewPacket("", []byte("PONG\r\n")), p.Addr); err != nil {
+				return err
+			}
+
+			continue
+		}
+	}
+	return nil
+}
+
+var pingPongHandshaker = gopeer.HandshakerFunc(func(peer gopeer.Peer) error {
+	_, err := peer.Write([]byte("PONG\r\n"))
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, 32)
+	read, err := peer.Read(buf)
+	if err != nil {
+		return err
+	}
+
+	if read < 4 || string(buf[:4]) != "PING" {
+		log.Printf("DEBUG: failed handshake with %s", peer.RemoteAddr())
+		return fmt.Errorf("invalid handshake with %s", peer.RemoteAddr())
+	}
+
+	log.Printf("DEBUG: success handshake with %s", peer.RemoteAddr())
+	return nil
+})
