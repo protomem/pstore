@@ -1,71 +1,53 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
-	"github.com/protomem/pstore"
-	"github.com/protomem/pstore/internal/blobstore"
-	"github.com/protomem/pstore/internal/p2p"
+	"github.com/protomem/pstore/internal/gopeer"
 )
 
-var (
-	_addr      = flag.String("addr", ":1337", "listen address")
-	_nodeAddrs = flag.String("nodes", "", "list addresses of nodes")
-)
+var _addr = flag.String("addr", ":1337", "listen address")
 
 func init() {
 	flag.Parse()
 }
 
 func main() {
-	ctx := context.Background()
-	log.Println("INFO: pstore version 0.1.0")
-
-	transport, err := p2p.NewTCPTransport(p2p.TCPOptions{
-		ListenAddr: *_addr,
-	})
+	tcpClient := gopeer.NewTCPClient()
+	tcpLis, err := gopeer.NewTCPListener(*_addr)
 	if err != nil {
-		log.Panicf("ERROR: new tcp transport: %v", err)
+		log.Printf("ERROR: new tcp listener: %v", err)
+		panic(err)
 	}
 
-	store, err := blobstore.NewFS(blobstore.FSOptions{
-		Path: ".database",
+	handshake := gopeer.HandshakerFunc(func(peer gopeer.Peer) error {
+		log.Printf("DEBUG: success handshake with %s", peer.RemoteAddr())
+		return nil
 	})
+
+	node, err := gopeer.NewNode(tcpLis, tcpClient, handshake)
 	if err != nil {
-		log.Panicf("ERROR: new file system storage: %v", err)
+		log.Printf("ERROR: new node: %v", err)
+		panic(err)
 	}
 
-	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{
-		Nodes: parseNodes(*_nodeAddrs),
-	})
-	go server.Process()
-
-	closeErr := make(chan error)
 	go func() {
-		<-quit()
-
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		closeErr <- server.Close(ctx)
+		for p := range node.Read() {
+			log.Printf("INFO: read packet from %s: %s", p.Addr, p.Payload)
+		}
 	}()
 
-	log.Printf("INFO: start server on addr %s", server.Addr())
+	log.Printf("INFO: start server on addr %s", node.Addr())
 	defer log.Printf("INFO: stop server")
 
-	if err := server.Start(); err != nil {
-		log.Panicf("ERROR: listen: %v", err)
-	}
+	<-quit()
 
-	if err := <-closeErr; err != nil {
-		log.Panicf("ERROR: close: %v", err)
+	if err := node.Close(); err != nil {
+		log.Printf("ERROR: close node: %v", err)
 	}
 }
 
@@ -73,12 +55,4 @@ func quit() <-chan os.Signal {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	return ch
-}
-
-func parseNodes(nodes string) []string {
-	nodes = strings.TrimSpace(nodes)
-	if nodes == "" {
-		return nil
-	}
-	return strings.Split(nodes, ",")
 }
