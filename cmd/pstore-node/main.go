@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,7 +15,10 @@ import (
 	"github.com/protomem/pstore/internal/p2p"
 )
 
-var _listenAddr = flag.String("addr", ":1337", "listen address")
+var (
+	_addr      = flag.String("addr", ":1337", "listen address")
+	_nodeAddrs = flag.String("nodes", "", "list addresses of nodes")
+)
 
 func init() {
 	flag.Parse()
@@ -25,7 +29,7 @@ func main() {
 	log.Println("INFO: pstore version 0.1.0")
 
 	transport, err := p2p.NewTCPTransport(p2p.TCPOptions{
-		ListenAddr: *_listenAddr,
+		ListenAddr: *_addr,
 	})
 	if err != nil {
 		log.Panicf("ERROR: new tcp transport: %v", err)
@@ -39,7 +43,7 @@ func main() {
 	}
 
 	server := pstore.NewFileServer(store, transport, pstore.FileServerOptions{
-		Nodes: []string{":1338"},
+		Nodes: parseNodes(*_nodeAddrs),
 	})
 	go server.Process()
 
@@ -69,4 +73,12 @@ func quit() <-chan os.Signal {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	return ch
+}
+
+func parseNodes(nodes string) []string {
+	nodes = strings.TrimSpace(nodes)
+	if nodes == "" {
+		return nil
+	}
+	return strings.Split(nodes, ",")
 }
